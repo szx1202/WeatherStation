@@ -179,11 +179,11 @@ void loop(void) {
     currentMillis = millis();
     
     // Test for SW reset every 12 hours
-    if ((rebootTimer-currentMillis) <0 ) {
+    /*if ((rebootTimer-currentMillis) <0 ) {
       Serial.print("elapse ");
       Serial.println(currentMillis - rebootTimer);
       ESP.restart();
-     }   
+     }*/   
      
     server.handleClient();  //  // Listen for HTTP requests from clientst
     
