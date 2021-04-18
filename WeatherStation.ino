@@ -9,6 +9,16 @@
 //==================================================================================================================================
 // 18/04/2021 SZ Meteo Station V3.0
 // Unified Outdoor and Indoor Code using 2 different Table (Outdoor_Data and Indoor_Data) in MariaDB Instance "esp_data" 
+// 
+// This Meteo station is based on ESP32 Dev Module. 
+// It is able to read from below sensors Meteo Data and to write them in a MariaDB installed on a Raspberry PI3
+// Raw Data read, on pre-defined hours, from the MariaDB Table and are published via and php page from the Raspberry
+// A Dashboard with the Real-Time data is published, in HTML format, by the ESP32, connected via WiFi.
+// Data can be read also by an LCD 16X2 Display by pushing a button  
+// Controller and Sensors:
+// - ESP32 Dev Module
+// - DHT22 sensor to read Temperature and Hunidity
+// - BMP280 sensor to read Pressure and Station Elevation
 //==================================================================================================================================
 
 #include <WiFi.h>
