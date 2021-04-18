@@ -7,98 +7,139 @@
 // https://diyprojects.io/esp8266-web-server-tutorial-create-html-interface-connected-object/
 
 //==================================================================================================================================
-// SZ Meteo Station V2.0
-// This Meteo station is based on ESP32 Dev Module. 
-// It is able to read from below sensors Meteo Data and to write them in a MariaDB installed on a Raspberry PI3
-// Raw Data read, on pre-defined hours, from the MariaDB Table and are published via and php page from the Raspberry
-// A Dashboard with the Real-Time data is published, in HTML format, by the ESP32, connected via WiFi.
-// Data can be read also by an LCD 16X2 Display by pushing a button  
-// Controller and Sensors:
-// - ESP32 Dev Module
-// - DHT22 sensor to read Temperature and Hunidity
-// - BMP280 sensor to read Pressure and Station Elevation
-//=======================================================================================================================================
+// 18/04/2021 SZ Meteo Station V3.0
+// Unified Outdoor and Indoor Code using 2 different Table (Outdoor_Data and Indoor_Data) in MariaDB Instance "esp_data" 
+//==================================================================================================================================
 
 #include <WiFi.h>
 #include "time.h"
 #include <Wire.h>
 
-// WiFi Connection Settings 
+// ***************************** INDOOR STATION ******************************************
+const char* serverName = "http:/szweb.eu/post-esp-data_out.php";  //For outdoor station 
+//PLEASE CORRECT THE WEB as PORTS LISTEN_PORT   8080  LISTEN_PORT_WiFi   8081
+
+
+// ***************************** OUTDOOR STATION ******************************************
+//const char* serverName = "http://szweb.eu/post-esp-data_in.php";
+//PLEASE CORRECT THE WEB PORTS as LISTEN_PORT   8082  LISTEN_PORT_WiFi   8083
+
+//---------------Statement from Dashboard published directly via HTML by ESP32------------------------------------
+#define LISTEN_PORT   8080 
+#include <WebServer.h>
+WebServer server(LISTEN_PORT); // publish Page Dashboard rom ESP32 (Temperature and Humidity on port 808x)
+
+// -------------------------- to get data in Jason format by REST Call --------------------------------------------
+#define LISTEN_PORT_WiFi          8081
+#include <aREST.h>    // to get For Rest Data
+aREST rest = aREST(); // Create aREST instance
+WiFiServer server2(LISTEN_PORT_WiFi); 
+
+//====================== WiFi Connection Settings =================================================================
 const char* ssid       = "LZ_24G";
 const char* password   = "*andromedA01.";
 
-// Time Settings 
+// ==================== Time Settings ============================================================================= 
 const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 0;
+const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
-// Declarations for Dashboard published directly via HTML by ESP32
-#include <WebServer.h>
-#define LISTEN_PORT               8080
-WebServer server(LISTEN_PORT);  // publish Dashboard ESP32 (Temperature and Humidity on port 8080)
+//======================= Web Servers Settings ====================================================================
 
-// Section HTTP request to publish data in DB hosted in a Raspi
+// -------------------- to perform HTTP request to publish data in DB hosted in a Raspi --------------------------
 #include <HTTPClient.h>
-// Keep this API Key value to be compatible with the PHP code provided in the project page. 
-// If you change the apiKeyValue value, the PHP file /post-esp-data.php also needs to have the same key 
+// If you change the apiKeyValue value, the PHP file /post-esp-data_out.php also needs to have the same key 
 String apiKeyValue = "tPmAT5Ab3j7F9";
-String sensorName = "DHT22";
-String sensorLocation = "Boot";
-const char* serverName = "http://szweb.eu/post-esp-data.php"; //Raspi PI that publish Data HTML Pages
+String sensorName = "DHT22"; // free text; in that case identifies the temp and hum sensor
+String sensorLocation = "In"; // free text; out=outdoor to identify that data are coming from Outside muy house 
 
-//#define DEBOUNCE_TIME 3600000  //define the DB update cycle time (1 Hour) if the time based approach isn't used (by npt server)
-//long DebounceTimer=0; // used in WebSqlWrite function to start the loop for writing in DB
+//#define DEBOUNCE_TIME 1800000 //3600000  //define the DB update cycle time
+#define REFRESH_TIME 60000 //define Oled Refresh cycle time (1 min)
+
+long DebounceTimer=0; // used in WebSqlWrite function to start the loop for writing in DB
 long currentMillis=0; // used in WebSqlWrite function
-long rebootTimer=43200000;  //time to trigger SW reboot (12h in milliseconds)
-int initialBoot=1; // used to control if the station did a start or reboot 1= station just started 
+//long rebootTimer=43200000;  //time to trigger SW reboot (12h in milliseconds)
+long refreshTimer=0;  // controls time interval to refresh data showed in the Oled display ; 
 
-// Section for DTH22 Temperature and Humidity
+//int initialBoot=1; // used to control if the station did a start or reboot 1= station just started 
+
+//======================= DTH22 Temperature and Humidity =============================================================
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
-#define DHTPIN 19     // what digital pin we're connected to
+#define DHTPIN 32     // what digital pin we're connected to
 #define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
+uint32_t delayMS;
 float h_dht; //humidity 
 float t_dht; // temperature in Celsius
+
+// =====================================================================================================================
 
 // GY-BME 280 Barometer I2C Address 0x76 
 #include <BMP280.h>
 #define P0 1013.25 // pressione standard, a livello del mare in mBar/hPa
 BMP280 bmp;
 
-double A_MIN = 0;
-double A_MAX = 0;
 double a_bmp=130.0;  // altezza slm in via Monte Baldo
 double t_bmp; 
 double p_bmp;
-double pCorr= 0.; //to normalize at the Level Sea P(level sea)= P(Real)+ 9*barom_H (9hpa every 100mt.) Pressure raise of 7mBar every 61 mt. in altitude
-double tCorr=0.; //correction of -8 Celsius to Atm. Pressure to compensate chip calibration
-double barom_H = 1.03; //Barometer Altitude divided by 100
+//double pCorr= 0.; //to normalize at the Level Sea P(level sea)= P(Real)+ 9*barom_H (9hpa every 100mt.) Pressure raise of 7mBar every 61 mt. in altitude
+//double tCorr=0.; //correction of -8 Celsius to Atm. Pressure to compensate chip calibration
+//double barom_H = 1.03; //Barometer Altitude divided by 100
 
-//Section for LCD 16X2 - I2C Address 0x27
-#include <LiquidCrystal_I2C.h>
-int LCD_Cols = 16;
-int LCD_Rows = 2;
-LiquidCrystal_I2C lcd(0x27,LCD_Cols,LCD_Rows);
+//======================= DS180 Temperature and Humidity =============================================================
+#include <OneWire.h>
+#include <DallasTemperature.h>
+// Data wire is plugged into port 19 
+#define ONE_WIRE_BUS 19
+#define TEMPERATURE_PRECISION 12 // Medium resolution
+float t_ds18; 
+
+// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
+OneWire oneWire(ONE_WIRE_BUS);
+
+// Pass our oneWire reference to Dallas Temperature. 
+DallasTemperature sensors(&oneWire);
+
+int numberOfDevices; // Number of temperature devices found
+
+DeviceAddress tempDeviceAddress; // We'll use this variable to store a found device address
+
+// ========================= SSD1306 Oled display connected to I2C SDA=21 SCL=22 ===========================================
+// https://randomnerdtutorials.com/esp32-ssd1306-oled-display-arduino-ide/
+
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+// (SDA, SCL pins)
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+
+// ====================================Interrupt routine for display  =====================================================
 int pinBtn=4; // Command button for LCD - Connected to interrupt
 int statusBtn; // Switch status 0=pressed 1=unpressed
-
-//************************************************************************************************************************
 void IRAM_ATTR isrLCD(void){  // this procedure is used to react to an interrupt after pressing Button for LCD display  
   statusBtn=digitalRead(pinBtn); // Switch status 0=pressed 1=unpressed 
-  Serial.print ("Interrupt");
+  //Serial.print ("Interrupt");
   //Serial.print (statusBtn);
 }  // End of IRAM_ATTR Funtion
-
 // ***********************************************************************************************************************
+
+int ledPin=25;
 void setup(void)
 {
+  pinMode(ledPin, OUTPUT);
+  digitalWrite(ledPin, HIGH);
+  
   Serial.begin(115200);
   Serial.printf("Connecting to %s ", ssid);
   Serial.println();
   int not_Conn=0;
+  
   WiFi.begin(ssid, password);
   
   while (WiFi.status() != WL_CONNECTED) {
@@ -106,152 +147,218 @@ void setup(void)
        delay(1000);
       not_Conn=not_Conn+1;
       Serial.println(not_Conn);
-      if (not_Conn>10){  // after 10 failed connect attempts a SW reboot is performed
+      if (not_Conn>5){
         Serial.println("I am restarting");
         ESP.restart();
       }
-      delay(500);
   }
-  
+  digitalWrite(ledPin, LOW);
   Serial.print("Local ip ");
   Serial.println(WiFi.localIP());
-  initialBoot=1; //indicates that the station just booted
+  //initialBoot=1; //indicates that the station just booted
   
-// Init and get the time 
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  //printLocalTime();
 
-// ESP 32 Web Dashboard
+
+// --------------------- ESP 32 Web Dashboard -------------------------------------------------------------------------------
   server.on("/", handle_OnConnect); // instance server for ESP32 dashboard web page
   server.onNotFound(handle_NotFound);
   server.begin();
   Serial.println("Server WebServer Started on port 8080");  
 
-// DHT22 Init 
+// ------------------------------------- Start Server instance for rest jason ------------------------------------------------
+  server2.begin(); // instance server for JSON data
+  Serial.println("Server WiFiServer Started on port 808x ");
+  // Init variables and expose them to REST API
+  rest.variable("t_dht",&t_dht);
+  rest.variable("h_dht",&h_dht);
+  rest.variable("t_p_bmp",&p_bmp);
+  rest.variable("t_ds18",&t_ds18);
+  rest.set_id("1");
+  rest.set_name("Meteo Module");
+
+ //+++++++++++++++++++++++++++++++ DHT22 Init +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   dht.begin(); //DHT22
   sensor_t sensor;
   dht.temperature().getSensor(&sensor);
 
-// GMP 280 Init 
+// +++++++++++++++++++++++++++++ GMP 280 Init +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
   if (!bmp.begin()) // verify Barometer is OK
     {
-    int A1=0;
-    delay(1000);
-    Serial.print("GMP280 Failure!"); // initialization fail
+    Serial.print("BMP280 Failure!"); // initialization fail
   }
-  
-  else {
-    int A2=0;
-    //Serial.print("inizializzazione ok"); // initialization ok
+  else {  
+    bmp.setOversampling(4);
+    Serial.print("BMP280 OK"); // initialization ok
   }
-  read_DHT22_U(); // Read DHT22 value
-  barometer();  // Read Barometric value from BMP 280 
-
-//LCD 16X2 Init
-  lcd.begin(); // initialize the LCD
-  lcd.backlight(); // Turn on the blacklight     
-  PrintToLCD();
-  delay(3000);
-  lcd.noBacklight(); // Turn off the blacklight
-  printLocalData(); // print collected data on Serial Console
-
-//Attach Button interrupt routine for LCD
+   //Attach interrupt routine
   pinMode(pinBtn, INPUT_PULLDOWN);
   attachInterrupt(pinBtn, isrLCD, RISING);
-}
+  
+display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
-// ***********************************************************************************************************************
+} // ***********  End Setup ********************
+
+// ****************************************************************************************************************************
+
 void loop(void) {
+  
   struct tm timeinfo;  // struct to store ntp time
-    
   if  (statusBtn==1){ //check statusBtn modified by interrupt if button has been pressed to display data on LCD 
     read_DHT22_U();
-    barometer();
-    lcd.clear();
-    lcd.backlight(); // Turn on the blacklight
-    PrintToLCD();
-    delay(5000);
-    lcd.noBacklight();
-  }  // end if   
+    read_BMP280();
+    //read_DS18B20();
+    oledWrite();
+    printLocalData();
+    WebSqlWrite();
+    statusBtn=0;
+  }  // end if 
 
-  if(WiFi.status()== WL_CONNECTED){     
-    getLocalTime(&timeinfo);
+  if(WiFi.status()== WL_CONNECTED){  
     currentMillis = millis();
-    
-    // Test for SW reset every 12 hours
-    /*if ((rebootTimer-currentMillis) <0 ) {
-      Serial.print("elapse ");
-      Serial.println(currentMillis - rebootTimer);
-      ESP.restart();
-     }*/   
-     
-    server.handleClient();  //  // Listen for HTTP requests from clientst
-    
-    getLocalTime(&timeinfo);
-    // read data from sensors at defined time
-    if ( (((timeinfo.tm_hour == 0) && (timeinfo.tm_min==0) && (timeinfo.tm_sec==0)) ||
-       ((timeinfo.tm_hour == 3) && (timeinfo.tm_min==0) && (timeinfo.tm_sec==0)) ||
-       ((timeinfo.tm_hour == 6) && (timeinfo.tm_min==0) && (timeinfo.tm_sec==0)) ||
-       ((timeinfo.tm_hour == 9) && (timeinfo.tm_min==0) && (timeinfo.tm_sec==0)) ||
-       ((timeinfo.tm_hour == 12) && (timeinfo.tm_min==0) && (timeinfo.tm_sec==0)) ||
-       ((timeinfo.tm_hour == 15) && (timeinfo.tm_min==0) && (timeinfo.tm_sec==0)) ||
-       ((timeinfo.tm_hour == 16) && (timeinfo.tm_min==0) && (timeinfo.tm_sec==0)) ||
-       ((timeinfo.tm_hour == 21) && (timeinfo.tm_min==0) && (timeinfo.tm_sec==0)) || 
-       (initialBoot==1)) )
+    server.handleClient(); 
+  
+    //if ((rebootTimer-currentMillis) <0 ) 
+    if ( (( (timeinfo.tm_hour==0)&& (timeinfo.tm_min==30) && (timeinfo.tm_sec==0))) || (( (timeinfo.tm_hour==8)&& (timeinfo.tm_min==30) && (timeinfo.tm_sec==0))) )
     {
+     Serial.println("REBOOT");
+     //Serial.println(currentMillis - rebootTimer);
+      ESP.restart();
+     }
      
-     // to be used to read from sensors at defined interval insted of prefixed time
-    //if ((currentMillis - DebounceTimer) > DEBOUNCE_TIME || initialBoot==1) { 
-      //Serial.println(currentMillis - DebounceTimer);     
-     
+    if ((currentMillis-refreshTimer)> REFRESH_TIME) 
+        {
       read_DHT22_U();
-      barometer();
-      //noInterrupts();  //exclude interrupts during the data writing on DB
-      
-      // Section to write to Raspi MariaDB (WebSqlWrite)
-      HTTPClient http;
-      http.begin (serverName);
-      // Specify content-type header
-      http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-      
-      // Prepare your HTTP POST request data
-      String httpRequestData = "api_key=" + apiKeyValue + "&sensor=" + sensorName
-                            + "&location=" + sensorLocation + "&t_dht=" + String(t_dht)
-                            + "&h_dht=" + String(h_dht) + "&p_bmp=" + String(p_bmp) + "";
-      Serial.print("httpRequestData: ");
-      Serial.println(httpRequestData);
-      
-      int httpResponseCode = http.POST(httpRequestData);
-      if (httpResponseCode>0) {
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
-      }
-      else {
-        Serial.print("Error code: ");
-        Serial.println(httpResponseCode);
-      }
-      Serial.print("SQLWrite");
-      //interrupts(); //enable interrupts
-      
-      //DebounceTimer=currentMillis; // to be used in case of read from sensors at defined interval
-      sensorLocation="Home";
-      initialBoot=0;
+      read_BMP280();
+      //read_DS18B20();
+      delay(100);
+      oledWrite();
+      printLocalData();
+      refreshTimer=currentMillis;
+    }
+    
+    getLocalTime(&timeinfo); 
+    if ((((timeinfo.tm_min==00) && (timeinfo.tm_sec==00)))) //execute the actions every hour   //|| (initialBoot==1))) needed to record the event at the boot
+    {    
+      //initialBoot=0;
+      read_DHT22_U();
+      read_BMP280();
+      //read_DS18B20();
+      oledWrite();
+      printLocalData();
+      WebSqlWrite();      
       delay (1000); // needed to not re-enter in the time check for multiple times
-    } // end of time if clause
+   
+      //DebounceTimer=currentMillis;
+      //sensorLocation="Out";
+     }
 
-  } // end if wifi status
+// ---------------------------------  Handle REST calls  -------------------------------------------------
+    
+    WiFiClient client = server2.available();
+
+    if (!client) {
+      return;
+    }
+    
+    if(!client.available()){
+      Serial.println("!client.available");
+      delay(1);
+    }
+    
+    rest.handle(client);
+    Serial.println("Rest OK");
+
+// ---------------------------------------------------------------------------------------------------------
+ } // end if wifi status
+  
   else {
     Serial.println("WiFi Disconnected");
   }
+} // ************** End Loop ************
 
+// ************************************************ Begin Procedure Section ********************************
+char timeWrite[7];
+char timeHour[3];
+int  dayWrite;
+int monthWrite;
+void getTimeWrite (void){
+ 
+  struct tm timeinfo;  // struct to store ntp time  
+  if(!getLocalTime(&timeinfo)){
+  Serial.println("Failed to obtain time");
+  return;
+  }        
+  strftime(timeHour,3, "%H", &timeinfo);
+  strftime(timeWrite,3, "%H", &timeinfo);
+  char timeMin[3];
+  strftime(timeMin,3, "%M", &timeinfo);
+  strcpy( timeWrite,timeHour);
+  strcat( timeWrite,":");
+  strcat( timeWrite,timeMin);
+  
+  dayWrite=timeinfo.tm_mday;
+  monthWrite=timeinfo.tm_mon+1;
 }
 
-// ============================================================= Start Routines' Section =======================================================================
+// *************************************************************************************************************
+void WebSqlWrite(void)
+{
+  
+  HTTPClient http;
+  http.begin (serverName);
+  // Specify content-type header
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-// Routine to read from DHT22
+  getTimeWrite();
+//  Serial.println(dayWrite);
+//  Serial.println(monthWrite);
+//  Serial.println(timeHour);
+  // Prepare your HTTP POST request data
+String httpRequestData = "api_key=" + apiKeyValue + "&sensor=" + sensorName
+                      + "&location=" + sensorLocation + "&t_dht=" + String(t_dht)
+                      + "&h_dht=" + String(h_dht) + "&p_bmp=" + String(p_bmp) + "&t_bmp=" + String(t_bmp) + "&t_ds18=" + String(t_ds18) 
+                      + "&Day=" + String(dayWrite) + "&Month=" + String(monthWrite) + "&Time=" + String(timeHour) + "";
+
+  Serial.print("httpRequestData: ");
+  Serial.println(httpRequestData);
+  
+  int httpResponseCode = http.POST(httpRequestData);
+  if (httpResponseCode>0) { 
+    Serial.print("HTTP Response code: ");
+    Serial.println(httpResponseCode);
+  }
+  else {
+    Serial.print("Error code: ");
+    Serial.println(httpResponseCode);
+  }
+  Serial.println("SQLWrite");
+  // Free resources
+  //http.end();
+}
+
+// *************************************************************************************************************
+void oledWrite (void){
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(WHITE);
+  
+  display.setCursor(0, 10);
+  display.print("T= ");
+  display.println(t_dht);
+  display.setCursor(0, 30);
+  display.print("H= ");
+  display.println(h_dht);  
+  display.setCursor(0, 50);
+  display.print("P= ");
+  display.println(p_bmp);  
+  display.display(); 
+}
+
+// *************************************************************************************************************
 void read_DHT22_U(void){  // read Temperature and Humidity from DTH22 Sensor
 
-  delay(100);
+  delay(delayMS);
   sensors_event_t event;  
   
   dht.temperature().getEvent(&event);
@@ -265,138 +372,75 @@ void read_DHT22_U(void){  // read Temperature and Humidity from DTH22 Sensor
     Serial.println("Error reading humidity!");
   }
   h_dht=event.relative_humidity;
-} 
+} // ************** read_DHT22_U ************
 
-// Routine to read from BMP 280 Sensor
-void barometer (void){ 
-  
- //pressure in mBar; elevation in meter
- char result = bmp.startMeasurment();
+// *************************************************************************************************************
+void read_DS18B20 (void){
+  sensors.requestTemperatures(); // Send the command to get temperatures
+  sensors.getAddress(tempDeviceAddress, 0);
+  t_ds18=sensors.getTempC(tempDeviceAddress);
+}
+//*************************************************************************************************************
+
+// **** Routine to read from BMP 280 Sensor ****
+void read_BMP280 (void){ 
+ char result = bmp.startMeasurment();    //pressure in mBar; elevation in meter
  int error;
-  
-  pCorr=(barom_H*9);
-  bmp.setOversampling(4);
   
   if (result != 0) {
       delay(result);
       result = bmp.getTemperatureAndPressure(t_bmp, p_bmp);
       if (result != 0) {
         a_bmp = bmp.altitude(p_bmp, P0);
-        a_bmp=132;  //altezza in via monte Baldo
-        
-        if ( a_bmp > A_MAX) {
-          A_MAX = a_bmp;
+        a_bmp=132;  //altezza in via monte Baldo  
       }
-      if ( a_bmp < A_MIN || A_MIN == 0) {
-        A_MIN = a_bmp;
-      }
-    }
     else {
       error=1;
-      //Serial.println(error);
+      Serial.println(error);
     }
   }
   else {
     error=2;
-    //Serial.println(error);
+    Serial.println(error);
   }
 }
+//*************************************************************************************************************
 
-// Routine to write data to LCD
-void PrintToLCD(void){
-  lcd.print("T=");
-  lcd.print(t_dht,1);
-  lcd.print(" H=");
-  lcd.print(h_dht,1);
-  
-  lcd.setCursor(0,1); //move cursor to second row
-  lcd.print("P=");
-  lcd.print(p_bmp,1);
-  lcd.print(" E=");
-  lcd.print(a_bmp,1);
-  statusBtn=0;
-}
-
-// Print Data on Serial Monitor
 void printLocalData(void){
   int digits;
-  
-//  DateTime now = rtc.now();
-//  Serial.println("**************************************");
-//  Serial.print(now.year(), DEC);
-//  Serial.print('/');
-//  Serial.print(now.month(), DEC);
-//  Serial.print('/');
-//  Serial.print(now.day(), DEC);
-//  
-//  Serial.print(" (");
-//  Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-//  Serial.print(") ");
-//  digits=now.hour();
-//  if(digits < 10)
-//    Serial.print('0');
-//  Serial.print(now.hour(), DEC);
-//  Serial.print(':');
-//  digits=now.minute();
-//  if(digits < 10)
-//    Serial.print('0');
-//  Serial.print(now.minute(), DEC);
-//  Serial.print(':');
-//  digits=now.second();
-//  if(digits < 10)
-//    Serial.print('0');
-//  Serial.println(now.second(), DEC);
-  //Serial.println("-------------------------------------");
-   
-//  long Temp_C=Read_Temp_DS3231(); 
-//  Serial.print( "T_DS3231= ");
-//  Serial.print( Temp_C / 100 );
-//  Serial.print( '.' );
-//  Serial.println( abs(Temp_C % 100) );
-//  Serial.println("-------------------------------------");
-  
-// Data from Barometer
-  Serial.print("T_Bar = \t"); Serial.print(t_bmp, 2); Serial.println(" gr. C\t");
-  Serial.print("P_Bar = \t"); Serial.print(p_bmp, 2); Serial.println(" mBar\t");
-  Serial.print("A_Bar = \t"); Serial.print(a_bmp, 2); Serial.println(" m");
-//  Serial.print("Alt= ");
-//  Serial.println (A);
-//  Serial.print("T_Barom= ");
-//  Serial.println (T);
-//  Serial.print("P= ");
-//  Serial.println (p_bmp);
-  Serial.println("**************************************");
- 
- //Data from DHTH 22
+  Serial.println();
   Serial.print("H_DTH22: ");
   Serial.print(h_dht);
   Serial.println(" %\t");
   Serial.print("T_DHT22: ");
   Serial.print(t_dht);
-  Serial.print(" *C ");
-  /*Serial.print(f_dht);
-  Serial.println(" *F\t");
-  Serial.print("Heat index: ");
-  Serial.print(hic_dht);
-  Serial.print(" *C ");
-  Serial.print(hif_dht);
-  Serial.println(" *F");  */
+  Serial.println(" *C ");
+  Serial.print("P_BMP: ");
+  Serial.print(p_bmp);
+  Serial.println(" mbar ");
+//  Serial.print("T_DS18B20: ");
+//  Serial.print(t_ds18);
+//  Serial.println(" %\t");
+}
+// ********************************************** PrintLocalData ***********************************************
 
-} 
 
-//Routine on to send data to ESP32 HTNL Page
+//**************************************************************************************************************
 void handle_OnConnect() {
   read_DHT22_U();
-  barometer();
-  server.send(200, "text/html", SendHTML(t_dht,h_dht,p_bmp,a_bmp)); 
+  read_BMP280;
+  //read_DS18B20();
+  server.send(200, "text/html", SendHTML(t_dht,h_dht,p_bmp, a_bmp)); 
 }
+
+//**************************************************************************************************************
 void handle_NotFound(){
   server.send(404, "text/plain", "Not found");
 }
-
-//Routine on topublish data to ESP32  HTNL Page
+//**************************************************************************************************************
 //https://how2electronics.com/esp32-bme280-mini-weather-station/
-String SendHTML(float temperature,float humidity,float pressure,float altitude){
+
+String SendHTML(float t_DHT22,float h_DHT22, float p_bmp,float a_bmp){
   String ptr = "<!DOCTYPE html>";
   ptr +="<html>";
   ptr +="<head>";
@@ -405,7 +449,7 @@ String SendHTML(float temperature,float humidity,float pressure,float altitude){
   ptr +="<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
   ptr +="<link href='https://fonts.googleapis.com/css?family=Open+Sans:300,400,600' rel='stylesheet'>";
   ptr +="<style>";
-  ptr +="html { font-family: 'Open Sans', sans-serif; display: block; margin: 0px auto; text-align: center;color: #444444;}";
+  ptr +="html { font-family: 'Open Sans', sans-serif; display: block; margin: 0px auto; text-align: center;color: #44  4444;}";
   ptr +="body{margin: 0px;} ";
   ptr +="h1 {margin: 50px auto 30px;} ";
   ptr +=".side-by-side{display: table-cell;vertical-align: middle;position: relative;}";
@@ -435,9 +479,9 @@ String SendHTML(float temperature,float humidity,float pressure,float altitude){
   ptr +="</div>";
   ptr +="<div class='side-by-side text'>Temperature</div>";
   ptr +="<div class='side-by-side reading'>";
-  ptr +=(float)temperature;
+  ptr +=(float)t_DHT22;
   ptr +="<span class='superscript'>&deg;C</span></div>";
-  ptr +="</div>";
+  ptr +="</div>"; 
   ptr +="<div class='data humidity'>";
   ptr +="<div class='side-by-side icon'>";
   ptr +="<svg enable-background='new 0 0 29.235 40.64'height=40.64px id=Layer_1 version=1.1 viewBox='0 0 29.235 40.64'width=29.235px x=0px xml:space=preserve xmlns=http://www.w3.org/2000/svg xmlns:xlink=http://www.w3.org/1999/xlink y=0px><path d='M14.618,0C14.618,0,0,17.95,0,26.022C0,34.096,6.544,40.64,14.618,40.64s14.617-6.544,14.617-14.617";
@@ -447,7 +491,7 @@ String SendHTML(float temperature,float humidity,float pressure,float altitude){
   ptr +="</div>";
   ptr +="<div class='side-by-side text'>Humidity</div>";
   ptr +="<div class='side-by-side reading'>";
-  ptr +=(float)humidity;
+  ptr +=(float)h_DHT22;
   ptr +="<span class='superscript'>%</span></div>";
   ptr +="</div>";
   ptr +="<div class='data pressure'>";
@@ -464,7 +508,7 @@ String SendHTML(float temperature,float humidity,float pressure,float altitude){
   ptr +="</div>";
   ptr +="<div class='side-by-side text'>Pressure</div>";
   ptr +="<div class='side-by-side reading'>";
-  ptr +=(int)pressure;
+  ptr +=(int)p_bmp;
   ptr +="<span class='superscript'>hPa</span></div>";
   ptr +="</div>";
   ptr +="<div class='data altitude'>";
@@ -479,7 +523,7 @@ String SendHTML(float temperature,float humidity,float pressure,float altitude){
   ptr +="</div>";
   ptr +="<div class='side-by-side text'>Altitude</div>";
   ptr +="<div class='side-by-side reading'>";
-  ptr +=(int)altitude;
+  ptr +=(int)a_bmp;
   ptr +="<span class='superscript'>m</span></div>";
   ptr +="</div>";
   ptr +="</div>";
