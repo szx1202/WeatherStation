@@ -9,12 +9,18 @@
 //==================================================================================================================================
 // 18/04/2021 SZ Meteo Station V3.0
 // Unified Outdoor and Indoor Code using 2 different Table (Outdoor_Data and Indoor_Data) in MariaDB Instance "esp_data" 
+//
+// 18/04/2021 SZ Meteo Station V3.0
+// Unified Outdoor and Indoor Code using 2 different Table (Outdoor_Data and Indoor_Data) in MariaDB Instance "esp_data" 
 // 
 // This Meteo station is based on ESP32 Dev Module. 
 // It is able to read from below sensors Meteo Data and to write them in a MariaDB installed on a Raspberry PI3
 // Raw Data read, on pre-defined hours, from the MariaDB Table and are published via and php page from the Raspberry
 // A Dashboard with the Real-Time data is published, in HTML format, by the ESP32, connected via WiFi.
-// Data can be read also by an LCD 16X2 Display by pushing a button  
+// Data can be read also by an Oled 128X64 Display pixel that is refreshed every min
+// A push button allows to read and record the data in the DB in asyncronous way and refresh the Oled as well 
+// An interrupt routine is invoked when button is pressed.
+  
 // Controller and Sensors:
 // - ESP32 Dev Module
 // - DHT22 sensor to read Temperature and Hunidity
@@ -71,7 +77,7 @@ long currentMillis=0; // used in WebSqlWrite function
 //long rebootTimer=43200000;  //time to trigger SW reboot (12h in milliseconds)
 long refreshTimer=0;  // controls time interval to refresh data showed in the Oled display ; 
 
-//int initialBoot=1; // used to control if the station did a start or reboot 1= station just started 
+int initialBoot=1; // used to control if the station did a start or reboot 1= station just started 
 
 //======================= DTH22 Temperature and Humidity =============================================================
 #include <Adafruit_Sensor.h>
@@ -236,7 +242,7 @@ void loop(void) {
       ESP.restart();
      }
      
-    if ((currentMillis-refreshTimer)> REFRESH_TIME) 
+    if (((currentMillis-refreshTimer)> REFRESH_TIME ) || (initialBoot==1) ) 
         {
       read_DHT22_U();
       read_BMP280();
@@ -245,6 +251,7 @@ void loop(void) {
       oledWrite();
       printLocalData();
       refreshTimer=currentMillis;
+      initialBoot=0;
     }
     
     getLocalTime(&timeinfo); 
