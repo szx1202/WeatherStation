@@ -32,13 +32,13 @@
 #include <Wire.h>
 
 // ***************************** INDOOR STATION ******************************************
-const char* serverName = "http:/szweb.eu/post-esp-data_out.php";  //For outdoor station 
-//PLEASE CORRECT THE WEB as PORTS LISTEN_PORT   8080  LISTEN_PORT_WiFi   8081
+//const char* serverName = "http:/szweb.eu/post-esp-data_out.php";  //For outdoor station 
+//PLEASE CORRECT THE WEB as PORTS LISTEN_PORT   8082  LISTEN_PORT_WiFi   8083
 
 
 // ***************************** OUTDOOR STATION ******************************************
-//const char* serverName = "http://szweb.eu/post-esp-data_in.php";
-//PLEASE CORRECT THE WEB PORTS as LISTEN_PORT   8082  LISTEN_PORT_WiFi   8083
+const char* serverName = "http://szweb.eu/post-esp-data_in.php";
+//PLEASE CORRECT THE WEB PORTS as LISTEN_PORT   8080  LISTEN_PORT_WiFi   8081
 
 //---------------Statement from Dashboard published directly via HTML by ESP32------------------------------------
 #define LISTEN_PORT   8080 
@@ -77,7 +77,7 @@ long currentMillis=0; // used in WebSqlWrite function
 //long rebootTimer=43200000;  //time to trigger SW reboot (12h in milliseconds)
 long refreshTimer=0;  // controls time interval to refresh data showed in the Oled display ; 
 
-int initialBoot=1; // used to control if the station did a start or reboot 1= station just started 
+//int initialBoot=1; // used to control if the station did a start or reboot 1= station just started 
 
 //======================= DTH22 Temperature and Humidity =============================================================
 #include <Adafruit_Sensor.h>
@@ -212,6 +212,7 @@ void setup(void)
   attachInterrupt(pinBtn, isrLCD, RISING);
   
 display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+display.ssd1306_command(SSD1306_DISPLAYOFF);
 
 } // ***********  End Setup ********************
 
@@ -220,14 +221,15 @@ display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 void loop(void) {
   
   struct tm timeinfo;  // struct to store ntp time
+ 
   if  (statusBtn==1){ //check statusBtn modified by interrupt if button has been pressed to display data on LCD 
     read_DHT22_U();
     read_BMP280();
     //read_DS18B20();
     oledWrite();
     printLocalData();
-    WebSqlWrite();
-    statusBtn=0;
+    statusBtn=0;    
+    //WebSqlWrite();
   }  // end if 
 
   if(WiFi.status()== WL_CONNECTED){  
@@ -241,8 +243,8 @@ void loop(void) {
      //Serial.println(currentMillis - rebootTimer);
       ESP.restart();
      }
-     
-    if (((currentMillis-refreshTimer)> REFRESH_TIME ) || (initialBoot==1) ) 
+/*     
+    if ((currentMillis-refreshTimer)> REFRESH_TIME) 
         {
       read_DHT22_U();
       read_BMP280();
@@ -251,11 +253,10 @@ void loop(void) {
       oledWrite();
       printLocalData();
       refreshTimer=currentMillis;
-      initialBoot=0;
     }
-    
+ */    
     getLocalTime(&timeinfo); 
-    if ((((timeinfo.tm_min==00) && (timeinfo.tm_sec==00)))) //execute the actions every hour   //|| (initialBoot==1))) needed to record the event at the boot
+    if ((((timeinfo.tm_min==0) && (timeinfo.tm_sec==0)))) //execute the actions every hour   //|| (initialBoot==1))) needed to record the event at the boot
     {    
       //initialBoot=0;
       read_DHT22_U();
@@ -352,14 +353,16 @@ String httpRequestData = "api_key=" + apiKeyValue + "&sensor=" + sensorName
   Serial.println("SQLWrite");
   // Free resources
   //http.end();
-}
+}  
 
 // *************************************************************************************************************
 void oledWrite (void){
+
+  
   display.clearDisplay();
   display.setTextSize(2);
-  display.setTextColor(WHITE);
   
+  display.setTextColor(WHITE);
   display.setCursor(0, 10);
   display.print("T= ");
   display.println(t_dht);
@@ -370,6 +373,9 @@ void oledWrite (void){
   display.print("P= ");
   display.println(p_bmp);  
   display.display(); 
+  display.ssd1306_command(SSD1306_DISPLAYON); 
+  delay(5000);
+  display.ssd1306_command(SSD1306_DISPLAYOFF);
 }
 
 // *************************************************************************************************************
