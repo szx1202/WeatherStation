@@ -52,8 +52,8 @@ aREST rest = aREST(); // Create aREST instance
 WiFiServer server2(LISTEN_PORT_WiFi); 
 
 //====================== WiFi Connection Settings =================================================================
-const char* ssid       = "LZ_24G";
-const char* password   = "*andromedA01.";
+const char* ssid       = "yourSID";
+const char* password   = "yourPWD";
 
 // ==================== Time Settings ============================================================================= 
 const char* ntpServer = "pool.ntp.org";
@@ -134,7 +134,6 @@ DeviceAddress tempDeviceAddress; // We'll use this variable to store a found dev
 // (SDA, SCL pins)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-
 // ====================================Interrupt routine for display  =====================================================
 int pinBtn=4; // Command button for LCD - Connected to interrupt
 int statusBtn; // Switch status 0=pressed 1=unpressed
@@ -171,10 +170,8 @@ void setup(void)
   digitalWrite(ledPin, LOW);
   Serial.print("Local ip ");
   Serial.println(WiFi.localIP());
-  //initialBoot=1; //indicates that the station just booted
-  
+  //initialBoot=1; //indicates that the station just booted  
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-
 
 // --------------------- ESP 32 Web Dashboard -------------------------------------------------------------------------------
   server.on("/", handle_OnConnect); // instance server for ESP32 dashboard web page
@@ -193,7 +190,7 @@ void setup(void)
   rest.set_id("1");
   rest.set_name("Meteo Module");
 
- //+++++++++++++++++++++++++++++++ DHT22 Init +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//+++++++++++++++++++++++++++++++ DHT22 Init +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   dht.begin(); //DHT22
   sensor_t sensor;
   dht.temperature().getSensor(&sensor);
@@ -216,7 +213,6 @@ display.ssd1306_command(SSD1306_DISPLAYOFF);
 
 } // ***********  End Setup ********************
 
-// ****************************************************************************************************************************
 
 void loop(void) {
   
@@ -295,13 +291,14 @@ void loop(void) {
   }
 } // ************** End Loop ************
 
+
 // ************************************************ Begin Procedure Section ********************************
 char timeWrite[7];
 char timeHour[3];
 int  dayWrite;
 int monthWrite;
-void getTimeWrite (void){
- 
+
+void getTimeWrite (void){ 
   struct tm timeinfo;  // struct to store ntp time  
   if(!getLocalTime(&timeinfo)){
   Serial.println("Failed to obtain time");
@@ -314,15 +311,12 @@ void getTimeWrite (void){
   strcpy( timeWrite,timeHour);
   strcat( timeWrite,":");
   strcat( timeWrite,timeMin);
-  
   dayWrite=timeinfo.tm_mday;
   monthWrite=timeinfo.tm_mon+1;
 }
 
 // *************************************************************************************************************
-void WebSqlWrite(void)
-{
-  
+void WebSqlWrite(void){
   HTTPClient http;
   http.begin (serverName);
   // Specify content-type header
@@ -332,8 +326,9 @@ void WebSqlWrite(void)
 //  Serial.println(dayWrite);
 //  Serial.println(monthWrite);
 //  Serial.println(timeHour);
-  // Prepare your HTTP POST request data
-String httpRequestData = "api_key=" + apiKeyValue + "&sensor=" + sensorName
+
+// Prepare your HTTP POST request data
+  String httpRequestData = "api_key=" + apiKeyValue + "&sensor=" + sensorName
                       + "&location=" + sensorLocation + "&t_dht=" + String(t_dht)
                       + "&h_dht=" + String(h_dht) + "&p_bmp=" + String(p_bmp) + "&t_bmp=" + String(t_bmp) + "&t_ds18=" + String(t_ds18) 
                       + "&Day=" + String(dayWrite) + "&Month=" + String(monthWrite) + "&Time=" + String(timeHour) + "";
@@ -357,11 +352,8 @@ String httpRequestData = "api_key=" + apiKeyValue + "&sensor=" + sensorName
 
 // *************************************************************************************************************
 void oledWrite (void){
-
-  
   display.clearDisplay();
   display.setTextSize(2);
-  
   display.setTextColor(WHITE);
   display.setCursor(0, 10);
   display.print("T= ");
