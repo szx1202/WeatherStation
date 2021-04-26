@@ -31,14 +31,8 @@
 #include "time.h"
 #include <Wire.h>
 
-// ***************************** INDOOR STATION ******************************************
-//const char* serverName = "http:/szweb.eu/post-esp-data_out.php";  //For outdoor station 
-//PLEASE CORRECT THE WEB as PORTS LISTEN_PORT   8082  LISTEN_PORT_WiFi   8083
-
-
-// ***************************** OUTDOOR STATION ******************************************
-const char* serverName = "http://szweb.eu/post-esp-data_in.php";
-//PLEASE CORRECT THE WEB PORTS as LISTEN_PORT   8080  LISTEN_PORT_WiFi   8081
+// ********************************************************************************
+const char* serverName = "http://<Pi3 Address>/post-esp-data_in.php";
 
 //---------------Statement from Dashboard published directly via HTML by ESP32------------------------------------
 #define LISTEN_PORT   8080 
